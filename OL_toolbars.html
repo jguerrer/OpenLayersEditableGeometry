@@ -1,0 +1,1027 @@
+<!--
+  TODO
+  El cambio de foco, enter y otras cosas no actualizan adecuadamente, y se corrompen valores en las tablas.
+  Sobre todo tras varios tabs, donde no permite salir del ultimo tab editado.
+
+  Habra que revisar porque ahora se mezcla reviion de eventos, texto y hay una variable de  edicion.
+
+
+
+-->
+
+<!--  https://github.com/openlayers/openlayers/releases/tag/v4.6.5 
+
+    https://openlayers.org/en/v4.6.5/apidoc/
+
+
+    --Se van a agregar funcioanlidades adicionales de dibujo basado en:
+
+
+    - Listado de coordenadas: requiero que el poligono se parta en coordenadas y se actualize
+    - Rumbo y distancia: Empleo la estructura anterior para ir aumentando
+    - Azimuth y distancia
+
+-->
+
+<!DOCTYPE html>
+<html>
+
+<head>
+  <style>
+    map {
+      width: 30%;
+    }
+
+    table {
+      width: 40%;
+    }
+
+    table,
+    th,
+    td {
+      border: 1px solid black;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 5px;
+      text-align: left;
+    }
+
+
+    table#t01 tr:nth-child(even) {
+      background-color: #eee;
+    }
+
+    table#t01 tr:nth-child(odd) {
+      background-color: #fff;
+    }
+
+    table#t01 th {
+      background-color: black;
+      color: white;
+    }
+  </style>
+  <title>Draw Features</title>
+
+  <script type="text/javascript" language="javascript" src="https://code.jquery.com/jquery-3.3.1.js"></script>
+
+  <link rel="stylesheet" href="https://openlayers.org/en/v4.6.5/css/ol.css" type="text/css">
+  <!-- The line below is only needed for old environments like Internet Explorer and Android 4.x -->
+  <script
+    src="https://cdn.polyfill.io/v2/polyfill.min.js?features=requestAnimationFrame,Element.prototype.classList,URL"></script>
+  <script src="https://openlayers.org/en/v4.6.5/build/ol.js"></script>
+
+
+  <!--  DATA TABLES -->
+  <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.19/css/jquery.dataTables.min.css">
+  <script type="text/javascript" language="javascript"
+    src="https://cdn.datatables.net/1.10.19/js/jquery.dataTables.min.js"></script>
+  <script type="text/javascript" language="javascript" src="rumbos.js"></script>
+
+
+  <!-- Esta es la version offline-->
+  <!-- <link rel="stylesheet" href="v4.6.5-dist/ol.css" type="text/css"> -->
+  <!-- The line below is only needed for old environments like Internet Explorer and Android 4.x -->
+
+  <!-- <script src="v4.6.5-dist/ol.js"></script> -->
+
+
+  <script>
+
+
+    let changedRows = [];//mantiene un registro de los puntos modificados, aunque puede ser no necesario
+    //window.doneUpdate = false;;//para saber cuando terminar, anque no funciona
+
+    //variables necesarias para rastrear los cambios en la tabla
+    //var data;
+    var seleccionado;//la celda seleccionada
+    var newInput;//la referencia al input
+
+    var seleccionadoOld;//la celda seleccionada
+    var oldInput;//la referencia al input
+    ///////    
+    var currentRow;
+    var lastRow;
+
+    var oldCell;
+    var currentCell;
+
+    var currentEvent;
+    var oldEvent = { target: { id: -1 } };
+
+
+
+    var currentText;
+    var oldText;
+
+    var datatable;
+
+    //Window.doneUpdate = false;
+
+
+    //funcion que reemplaza html de un elemento con un html
+    //esperaria cambiarlo via jquery
+    let replaceText = function (newText, modItem) {
+
+      modItem.innerHTML = "<b>" + newText + "<b>";
+      window.doneUpdate = true;
+    };
+
+
+
+
+
+
+    //Funcion actual
+    let setEditableTable2 = function (table_id) {
+
+
+      console.log("dEBUG: SetEditableTable()");
+
+      //esta parte es correcta
+      //en general se debe permitir que se para cada click, se obtenga el renglon
+      $('#' + table_id + ' tbody').on('click', 'td', function (evt) {
+        currentRow = this.parentElement.rowIndex;//obtenemos la fila actual, guardaremos la anterior?
+        console.log("dEBUG: SetEditableTable2()");
+
+        //procesamos los eventos de rumbo y distancia
+        if (evt.target.id == 'calcular') {
+          console.log("Calculando valores para el punto " + currentRow + " en " + (currentRow + 1));
+
+          //buscamos la fila implicada
+          let row = $('#t01').find('tr:eq(' + currentRow + ')');
+
+          //obtenemos los datos
+          let x = parseFloat(row.find("td[type|='x']")[0].innerText);
+          let y = parseFloat(row.find("td[type|='y']")[0].innerText);
+
+          let hs = row.find("input[name|='heading_start']")[0].value;
+          let heading = parseFloat(row.find("input[name|='heading']")[0].value);
+          let he = row.find("input[name|='heading_end']")[0].value;
+
+          let dist = parseFloat(row.find("input[name|='distancia']")[0].value);
+
+
+          ////////////// tenemos que revisar si la fila es la ultima
+          //o guardamos el atributo o calculamos el numero de filas
+          //
+
+          //          filas=$('#t01 tbody').find('tr').length
+
+          updatenNextCoordinate(currentRow + 1, x, y, hs, heading, he, dist);
+
+
+
+          // obtener las coordenadas, el numero de renglon y aplicar las funciones de angulo, rumbo y distancia para
+          //actualizar la siguiente coordenada, actualizando el dibujo y la tabla.
+          //en el inter se podran realizar analisis de muchos tipos.
+        }
+
+        if (evt.target.id == 'r') {
+          //          Agregamos un elemento temporar que indica que coordenada es:
+          console.log('agregando un punto temporal indicando donde esta la coordenada')
+
+
+          let cr = $('#t01').find('tr:eq(' + currentRow + ')')
+          //let datos = cr.children();
+          let x = parseFloat(cr.find("td[type|='x']")[0].innerText);
+          let y = parseFloat(cr.find("td[type|='y']")[0].innerText);
+
+          auxPoints.clear();
+          if (auxPoints.getFeatures().length == 0) {
+            let coords = [x, y];
+            console.log(coords);
+
+            //let newSource = new ol.source.Vector({ wrapX: false });//aqui es donde se dibuja
+            
+            var feature = new ol.Feature({
+              geometry: new ol.geom.Point(coords),
+              //style:myStyle,
+
+              name: 'My LineString'
+            });
+
+            auxPoints.addFeature(feature);
+
+
+
+            return;
+          }
+
+
+
+
+        }
+
+
+        //AGREGAR COORDENADA
+        //este evento se puede agregar en cualquier momento, pero el ultimo punto se muestra pero no se edita
+        //1) si se realiza en alguna posicion antes del ultimo punto, se agrega una coordenada entre el punto actual y el siguiente, acutalizando el dibujo
+        //2) Si se realiza en el ultimo punto, el cual coincide con 
+        if (evt.target.id == 'agregar') {
+
+          //revisamos los posibles casos:
+
+          let coords = source.getFeatures()[0].getGeometry().getCoordinates();
+          let coordsLength = source.getFeatures()[0].getGeometry().getCoordinates().length;
+
+          if (source.getFeatures()[0].getGeometry().getType() == 'LineString') {
+
+            console.log("LINESTRING Agregando nuevo punto en la posicion del arreglo " + (currentRow));
+
+
+            newCoords = [];
+            for (let idx = 0, counter = 0; counter <= coordsLength; counter++) {
+
+              console.log("Coord # " + idx)
+
+              if (counter != (currentRow)) {
+                newCoords.push(coords[idx])
+                console.log("NewSize= " + newCoords.length);
+                idx++;
+              }
+              else {
+                console.log('Agregando coordenada ' + idx)
+                newCoords.push(getCenterCoordinates());//agregamos el centro
+              }
+            }
+            console.log("Final Size = " + newCoords.length);
+            console.log(newCoords)
+            source.getFeatures()[0].setGeometry(new ol.geom.LineString(newCoords));
+
+            $('#tablebody').children().remove();
+            retrieveCoords(source);
+          }//end of if linestring
+
+
+          if (source.getFeatures()[0].getGeometry().getType() == 'Polygon') {
+
+          }
+
+          //Actualizamos la fuente y la tabla
+
+
+
+
+
+
+        }
+
+        //BORRAR COORDENADA LINEA O POLIGONO
+        if (evt.target.id == 'borrar') {//borramos la linea actual, o la coordenada actual, lo que impli
+
+          //revisamos los posibles casos:
+
+          if (source.getFeatures()[0].getGeometry().getType() == 'LineString') {
+            console.log("Borrando: LINESTRING");
+
+            console.log("Borrando punto en la posicion " + (currentRow));
+            /////////////////////////////
+
+            let coords = source.getFeatures()[0].getGeometry().getCoordinates();
+            let coordsLength = source.getFeatures()[0].getGeometry().getCoordinates().length;
+
+            console.log(coords)
+
+            // if (source.getFeatures()[0].length < 4) {
+            //   console.log('Sin elementos suficientes.');
+            //   return;
+            // }
+
+            //             copiamos las coordenadas actuales a unas nuevas sin elelemento
+            newCoords = [];
+            for (let idx = 0; idx < coordsLength; idx++) {
+              console.log("Coord # " + idx)
+
+              if (idx != (currentRow - 1)) {
+
+                newCoords.push(coords[idx])
+                console.log("NewSize= " + newCoords.length);
+                //              newCoords.push([datos[0].innerText, datos[1].innerText])
+                //              console.log(row + ": " + datos[0].innerText + ' ' + datos[1].innerText);
+              }
+              else {
+                console.log('Borrando coordenada ' + idx)
+              }
+            }
+            //});
+            console.log("Final Size = " + newCoords.length);
+
+            console.log(newCoords)
+            source.getFeatures()[0].setGeometry(new ol.geom.LineString(newCoords))
+
+
+            /////////////////////////////
+            $('#tablebody').children().remove();
+            retrieveCoords(source);
+
+
+
+
+          }
+
+          if (source.getFeatures()[0].getGeometry().getType() == 'Polygon') {
+            console.log('Borrando punto en polygon TODO');
+          }
+
+
+
+        }
+
+
+
+        //lo primero es guardar la informacion vieja para almacenar la nueva
+        // para atender casos donde se pierde el foco, se da click en otro lado 
+        //texto anterior y actual
+        //elemento seleccionado anterior y actual
+        //evento anterior y actual       
+        //a su vez, hay que cerrar y actualzar lo que haya cambiado
+
+
+        //lo primero es revisar si ha existido cambio de elemento contra el anterior
+        //idealmente cada td en su creacion tiene un id unico
+
+        //basicamente lo primero es ver si nos salimos del objeto de la celda
+
+
+        //si es la primera vez
+        // if(oldEvent.target.id== -1){
+        //   console.log("dEBUG: Evento anterior nulo o inexistente");
+
+        //   oldEvent=evt;
+        //   currentEvent=evt;
+        // }
+
+
+        //si hay que cerrar
+        if (oldEvent.target.id != evt.target.id) {
+          console.log("dEBUG: Evento anterior distinto al nuevo");
+
+          //hubo cambio de celda y hay que guardar y cerrar lo de la celda anterior.
+          //en su caso, a la celda anterior se le puede llamar el metodo blur(), 
+
+          //basicamente es reemplazar el contenido del texto viejo con el nuevo pero tambien
+          // quitar el input
+
+          //para esto, existe una referencia siempre al nodo seleccionado , que es el anterior
+
+          oldEvent.target.innerHTML = oldEvent.target.innerText;
+
+
+
+        }
+        //ahora procedemos acambiar el texto por un input y agregar comportamienteo al input
+
+        //en otro caso habra que revisar si el elemento ya cambio de forma
+        //si es B, pues volvemos a colocar la forma
+        // si es input, dejamos la forma
+        //la primera vez no es ni B ni input, asi que no tiene longitud
+
+        //TODO Esta parte no procesa correctamente los eventos.
+
+        currentCell = this;
+        currentText = currentCell.innerText;
+
+        // if(this.childNodes[0].tagName==null){//si no tiene el input
+        try {
+          if (currentCell.childElementCount == 1 && currentCell.children[0].tagName == 'B') {
+            console.log("dEBUG: TD Elemento Seleccionado Bold");
+
+            currentCell.innerHTML = '<input id="12345" type="search" value="' + currentText + '">';
+          }
+
+          if (currentCell.childElementCount == 0) {
+            console.log("dEBUG: TD Elemento Seleccionado Sin estilo previo");
+
+            currentCell.innerHTML = '<input id="12345" type="search" value="' + currentText + '">';
+          }
+
+          //else , nada, tiene input
+
+        } catch{ console.log('YA existe') }
+
+        newInput = $('#12345');//obtenemos una referencia jquery al input
+
+        //definimos comportamiento por si sale de foco
+
+        //si sale de foco, es guardar lo que ya se tenia y se borra la forma
+        newInput.blur(function (e) {
+
+          let newText = newInput[0].value;
+          if (currentText != newText) {
+            //seleccionado.innerHTML = "<b>" + newText + "<b>";
+            updateText(currentCell, "<b>" + newText + "<b>");
+
+            changedRows.push(currentRow);
+            oldEvent = e;
+
+          }
+          else {//ni no cambio el texto, no lo indico
+
+
+            updateText(currentCell, currentText);
+
+            oldEvent = e;
+
+          }
+
+        });
+
+
+
+
+
+
+
+
+
+        newInput.keypress(function (e) {
+          if (e.which == '13') {
+            newInput.blur();//reciclamos funcionalidad
+          }
+
+        });
+
+        newInput.focus();
+
+        //falta revisar si se modifica el primero o el ultimo elemento
+
+      });
+
+    };
+
+
+    // funcion auxiliar que actualiza el texto de la celda con un valor
+    //solamente es para uniformar las llamads
+    function updateText(modelement, text) {
+      modelement.innerHTML = text;
+      //aqui ponemos llamadas a otros metodos
+      // updatePolygon();// aunque no reviso si es correcta la entrada
+      updateGeomFromCoords();
+    }
+
+  </script>
+
+
+
+
+</head>
+
+<body>
+  <div id="map" class="map"></div>
+  <form class="form-inline">
+    <label>Geometry type &nbsp;</label>
+    <select id="type">
+      <option value="Point">Point</option>
+      <option value="LineString">LineString</option>
+      <option value="Polygon">Polygon</option>
+      <option value="Circle">Circle</option>
+      <option value="None">None</option>
+    </select>
+  </form>
+
+  <div id="toolbar">
+    <button id="getCoordinates">Obtener Coordenadas</button>
+    <button id="addPoint">Agregar Punto </button>
+    <button id="guardarCambios">Aplicar Cambios</button>
+    <button id="borrarGeometria">Borrar</button>
+    <button id="activarSnap">Activar SNAP</button>
+    <button id="zoomToFeature">ZoomToFeature</button>
+
+
+
+  </div>
+
+  <!-- Contenedor para la tabla de coordenadas-->
+  <div id="coords">
+    <table id="t01">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>X</th>
+          <th>Y</th>
+          <th>Angulo</th>
+          <th>Distancia</th>
+          <th>Herramientas</th>
+        </tr>
+      </thead>
+      <tbody id="tablebody"></tbody>
+    </table>
+
+  </div>
+
+  <div id="resultados">Resultados</div>
+
+  <script>
+    //default
+    var raster = new ol.layer.Tile({
+      source: new ol.source.OSM()
+    });
+
+    //default
+    var source = new ol.source.Vector({ wrapX: false });
+
+    var auxPoints = new ol.source.Vector({ wrapX: false });
+
+
+    //aqui es de donde se dibuja
+    var vectorLayer = new ol.layer.Vector({
+      source: source
+    });
+
+    //aqui es de donde se dibuja
+    var myStyle = new ol.style.Style({
+              image: new ol.style.Circle({
+                radius: 7,
+                // fill: new ol.style.Fill({ color: 'black' }),
+                stroke: new ol.style.Stroke({
+                  color: [255, 0, 0], width: 2
+                })
+              })
+            })
+
+    var pointsLayer = new ol.layer.Vector({
+      source: auxPoints,
+      style: myStyle
+    });
+
+    //la estructura de mapa
+    var map = new ol.Map({
+      layers: [raster, vectorLayer, pointsLayer],
+      target: 'map',
+      view: new ol.View({
+        center: [-11000000, 4600000],
+        zoom: 4
+      })
+    });
+
+    //con esto se seleccion ael tipo de geometria
+    var typeSelect = document.getElementById('type');
+
+    var draw; // global so we can remove it later
+    function addInteraction() {
+      var value = typeSelect.value;
+      if (value !== 'None') {
+        draw = new ol.interaction.Draw({
+          source: source,
+          type: typeSelect.value
+        });
+        map.addInteraction(draw);//debe estar ya definida
+      }
+    }
+
+
+
+
+
+
+    /**
+     * Handle change event.
+     */
+    typeSelect.onchange = function () {
+      map.removeInteraction(draw);
+      addInteraction();
+    };
+
+    addInteraction();
+
+
+    //requerimos una funcion que lea todas las coordenadas y las vacie en una tabla
+    // En este punto ya requerimos jquery
+
+    //        https://openlayers.org/en/v4.6.5/apidoc/ol.Feature.html
+
+
+
+
+    //TODO la primera vez hace raros y repite coordenadas
+
+
+    function getPolygonLength(sourceLayer) {
+      let coords = sourceLayer.getFeatures()[0].getGeometry().getCoordinates()[0];
+      console.log(coords.length)
+      return coords.length;
+
+    }
+
+
+    /**
+    * Funcion que lee las coordenadas del primer poligono (Su anillo exterior) y las coloca en una tabla
+    * para su posterior edicion.
+    * Solo funciona con el primer poligono de la capa
+    * y desde una capa de vector llamada 'source'
+    */
+    function retrieveCoords(sourceLayer) {
+
+
+      //aqui tenemos un detalle, si es poligono funciona, si no lo es, no
+      let firstFeature = sourceLayer.getFeatures()[0];
+      let geom = firstFeature.getGeometry();
+      let geomType = geom.getType()
+      let coords;
+      if (geomType == 'LineString') {
+        console.log('RESTRIEVECOORDS: IS LINESTRING')
+        coords = geom.getCoordinates();//las coordenadas estan en un solo arreglo inmediato
+
+      }
+
+      if (geomType == 'Polygon') {
+        coords = geom.getCoordinates()[0];//nos quedamos con el anillo exterior
+        console.log('RESTRIEVECOORDS: IS POLYGON')
+
+      }
+
+      console.log(coords.length)
+      
+      let body = $('#tablebody');
+      let tdCounter = 10000;
+      for (let i = 0; i < coords.length; i++) {
+        console.log(i + ': ' + coords[i][0] + '   ' + coords[i][1]);
+
+        let row = $('<tr id="' + i + '">');
+        $('<td id="r">' + (i + 1) + '</td>').appendTo(row)
+        $('<td id="' + tdCounter++ + '" type="x">' + coords[i][0] + '</td>').appendTo(row)
+        $('<td id="' + tdCounter++ + '" type="y">' + coords[i][1] + '</td>').appendTo(row)
+        $('<td id="' + tdCounter++ + '" type="rumbo">' +
+          '<input name="heading_start" type="button" value="N" />' +
+          '<input name="heading" type="input" value="0.0"/>' +
+          '<input name="heading_end" type="button" value="E"></input></td>').appendTo(row);
+
+        let hs = row.find("input[name|='heading_start']")
+        hs.click(function (evt) {
+          console.log(this.parentNode.parentNode.id);
+          if (this.value == 'N') {
+            this.value = 'S';
+          }
+          else {
+            this.value = 'N';
+          }
+        });
+        let he = row.find("input[name|='heading_end']")
+        he.click(function (evt) {
+          console.log(this.parentNode.parentNode.id);
+          if (this.value == 'E')
+            this.value = 'W';
+          else
+            this.value = 'E';
+        });
+
+
+        $('<td id="' + tdCounter++ + '" >  <input name="distancia" value="0.0"></input></td>').appendTo(row)
+        //agregando botones dinamicos
+
+        $('<td id="' + tdCounter++ + '">'
+          + '<button id="calcular">Calcular Siguiente</button>'
+          + '<button id="agregar">Agregar Siguiente</button>'
+          + '<button id="borrar">Borrar</button>'
+
+          + '</td>').appendTo(row)
+
+
+        row.appendTo(body)
+
+        //          <td>' + coords[i][1] + '</td></tr>').appendTo('#tablebody');
+
+      }
+      //        source.getFeatures()[0].getGeometry().getFirstCoordinate()[0])
+      //revisar item.getGeometry().setCoordinates(modifiedCoordinate);
+     
+      
+      datatable=null;
+      datatable=$('#t01').DataTable();
+      //datatable.draw();
+    }
+
+
+    /**
+    * Funcion que agrega un punto a la geometria, ya sea de linea o poligono, en particular de 
+    * 
+    */
+    function addPoint(sourceLayer) {
+
+
+      //
+
+      if (sourceLayer.getFeatures().length == 0) {
+        let coords = [getCenterCoordinates()];
+        console.log(coords);
+
+        //let newSource = new ol.source.Vector({ wrapX: false });//aqui es donde se dibuja
+
+        var feature = new ol.Feature({
+          geometry: new ol.geom.LineString(coords),
+          name: 'My LineString'
+        });
+
+        sourceLayer.addFeature(feature);
+
+
+
+        return;
+      }
+      
+      let firstFeature = sourceLayer.getFeatures()[0];
+      let geom = firstFeature.getGeometry();
+      let geomType = geom.getType()
+
+      if ( geomType== 'LineString') {
+        console.log('RESTRIEVECOORDS: IS LINESTRING')
+        coords = geom.getCoordinates();//las coordenadas estan en un solo arreglo inmediato
+        coords.push(getCenterCoordinates())
+        source.getFeatures()[0].setGeometry(new ol.geom.LineString(coords));
+
+      }
+
+      if (geomType == 'Polygon') {
+        coords = geom.getCoordinates()[0];//nos quedamos con el anillo exterior
+        console.log('RESTRIEVECOORDS: IS POLYGON')
+
+      }
+
+    }
+
+
+
+    /*
+    *Metodo que actualiza el poligono dibujado en pantalla para utilizar los datos de la tabla.
+    Los elementos de la tabla poseen un orden que ayuda a su recreacion.
+    */
+    function updateGeomFromCoords() {
+      if (source.getFeatures()[0].getGeometry().getType() == 'LineString') {
+        updateLineString()
+      }
+
+      if (source.getFeatures()[0].getGeometry().getType() == 'Polygon') {
+        updatePolygon()
+      }
+
+    }
+
+
+    /**
+    * ejemplos que toma las coordenadas y la modifica programaticamente
+let coords = source.getFeatures()[0].getGeometry().getCoordinates()[0];
+  coordsNew=coords;
+  coordsNew[1][0]=coords[1][0]+ 100000
+  coordsNew[1][1]=coords[1][1]+ 100000
+source.getFeatures()[0].setGeometry(new ol.geom.Polygon([coordsNew]))
+    */
+
+      /////////
+
+  </script>
+  <script>
+
+
+    //esta funcion revisa si algun elemento de la columna ha sido cambiado
+    //aunque en el caso de los poligonos, se debe reemplazar toda la geometria.
+    function sendChanges() {
+      changedRows.forEach(row => {
+        console.log("Modificado " + row)
+        //aqui debo de pedir la fila necesaria y enviar la info
+        let cr = $('#t01').find('tr:eq(' + row + ')')
+        let datos = cr.children();
+        for (i = 0; i < datos.length; i++) {
+          let tmp = i + " : " + datos[i].innerText
+          console.log(tmp)
+          $('#resultados').append('<h1>' + tmp)
+        };
+      });
+    }
+
+
+
+    /**
+    * Esta funcion lee  reemplaza la geometria visualizada con los  datos visibles de la tabla.
+    * No se rastrean cambios, solo se  genera un nuevo poligono.
+    * En este caso, como es un poligono se requiren al menos cuatro puntos para visualizar poligono
+    */
+
+
+    function updatePolygon() {
+
+
+      let coords = source.getFeatures()[0].getGeometry().getCoordinates()[0];
+      let coordsLength = source.getFeatures()[0].getGeometry().getCoordinates()[0].length;
+
+      if (source.getFeatures()[0].length < 4) {
+        console.log('Sin elementos suficientes.');
+        return;
+      }
+      //changedRows.forEach(row => {
+      newCoords = [];
+      for (let row = 1; row <= coordsLength; row++) {//empezamos con row=1
+        console.log("Row " + row)
+        //aqui debo de pedir la fila necesaria y enviar la info
+        let cr = $('#t01').find('tr:eq(' + row + ')')
+        //let datos = cr.children();
+        let x = parseFloat(cr.find("td[type|='x']")[0].innerText);
+        let y = parseFloat(cr.find("td[type|='y']")[0].innerText);
+        newCoords.push([x, y]);
+        console.log(row + ": " + x + ' ' + y);
+      }
+      //});
+      console.log(newCoords)
+      source.getFeatures()[0].setGeometry(new ol.geom.Polygon([newCoords]))
+
+    }
+
+
+    /**
+    * Esta funcion lee  reemplaza la geometria visualizada con los  datos visibles de la tabla.
+    * No se rastrean cambios, solo se  genera una nueva LineString. El unico requerimiento es que sean dos puntos?
+    * En este caso, como es un LineString se requiren al menos dos puntos para visualizar poligono
+    */
+    function updateLineString() {
+
+      console.log('updateLineString');
+      let coords = source.getFeatures()[0].getGeometry().getCoordinates();
+      let coordsLength = source.getFeatures()[0].getGeometry().getCoordinates().length;
+      console.log(coordsLength);
+
+      // if (source.getFeatures()[0].length < 4) {
+      //   console.log('Sin elementos suficientes.');
+      //   return;
+      // }
+      //changedRows.forEach(row => {
+
+      let newCoords = [];
+      for (let row = 1; row <= coordsLength; row++) {//empezamos con row=1
+        //console.log("Row " + row)
+        //aqui debo de pedir la fila necesaria y enviar la info
+        let cr = $('#t01').find('tr:eq(' + row + ')')
+        //let datos = cr.children();
+        let x = parseFloat(cr.find("td[type|='x']")[0].innerText);
+        let y = parseFloat(cr.find("td[type|='y']")[0].innerText);
+        newCoords.push([x, y]);
+        console.log('ROW: ' + row + ": " + x + ' ' + y);
+      }
+      console.log(newCoords)
+      source.getFeatures()[0].setGeometry(new ol.geom.LineString(newCoords));
+
+    }
+
+
+    /**
+     * Funcion que actualiza la  coordenada del poligono indicada por nextRow, basado en datos de una coordenada.
+     * Esta funcion no agrega ni revisa si es la ultima aun, no las validaciones para cerrar poligonos. 
+     * x: 
+     * y:
+     * heading_start: N o S
+     * heading:  0 <= x <= 90
+     * heading_end: E o W
+     **/
+
+    function updatenNextCoordinate(nextRow, x, y, heading_start, heading, heading_end, distance) {
+      let nextCoordinates = siguienteCoordenadaRumboDistancia(x, y, heading_start, heading, heading_end, distance);
+      console.log(x + " --> " + nextCoordinates[0]);
+      console.log(y + " --> " + nextCoordinates[1]);
+
+      let row = $('#t01').find('tr:eq(' + nextRow + ')');
+      //aqui se van a actualizar las coordenadas  de ka siguiente coordenada
+      row.find("td[type|='x']")[0].innerText = nextCoordinates[0];
+      row.find("td[type|='y']")[0].innerText = nextCoordinates[1];
+
+      updateGeomFromCoords();
+      // updatePolygon();//indico que se debe de tomar los datos de la tabla y generar la geometria.
+
+      // $('#tablebody').children().remove()
+      //  retrieveCoords();//algo pasa que inserta en desorden, asi que vuelvo a hacerlo
+
+
+
+
+    }
+
+
+    //esta funcion agrega un registro o nodo dentro del poligono directamente y se leen las coordenadas
+    //el nuevo punto se agrega 
+    //1) basado en el centro
+    //2) basado en 
+    function addNextCoord(nextRow) {
+      let nextCoordinates = getCenterCoordinates();
+      console.log(" --> " + nextCoordinates[0]);
+      console.log(" --> " + nextCoordinates[1]);
+
+      //TODO
+      //en realidad esta mal, no edito la tabla directamente,sino la geometria y despues actualizo la tabla
+      let row = $('#t01').find('tr:eq(' + nextRow + ')');
+      //aqui se van a actualizar las coordenadas  de ka siguiente coordenada
+      row.find("td[type|='x']")[0].innerText = nextCoordinates[0];
+      row.find("td[type|='y']")[0].innerText = nextCoordinates[1];
+
+      updateGeomFromCoords();
+      // updatePolygon();//indico que se debe de tomar los datos de la tabla y generar la geometria.
+
+      // $('#tablebody').children().remove()
+      //  retrieveCoords();//algo pasa que inserta en desorden, asi que vuelvo a hacerlo
+
+
+
+
+    }
+
+
+  </script>
+  <script>
+
+    function zoomToFeature(sourceLayer) {
+
+      if (sourceLayer.getFeatures().length == 0) {
+        console.log('no hay rasgo');
+        alert('No hay trazos')
+      }
+      else {
+        let extent = sourceLayer.getFeatures()[0].getGeometry().getExtent();
+        ol.control.ZoomToExtent(extent);
+      }
+    }
+
+    function getCenterCoordinates() {
+      return map.getView().getCenter();
+    }
+
+    function initToolbar() {
+      //agregamos la funcionalidad a lo botones de la barra de herramientas
+      //la capa es source.
+      $('#getCoordinates').click(function () {
+        $('#tablebody').children().remove()
+        retrieveCoords(source);//algo pasa que inserta en desorden, asi que vuelvo a hacerlo
+        $('#tablebody').children().remove()
+        retrieveCoords(source);
+
+
+        setEditableTable2('t01')
+
+
+      });
+
+      $('#addPoint').click(function () {
+
+        //primero agregamos un nodo al final de la geometria y despues actualizamos las coordenadas
+        $('#tablebody').children().remove()
+
+        addPoint(source)
+
+        retrieveCoords(source);//algo pasa que inserta en desorden, asi que vuelvo a hacerlo
+
+        // $('#tablebody').children().remove()
+        // retrieveCoords(source);//algo pasa que inserta en desorden, asi que vuelvo a hacerlo
+
+
+        // $('#tablebody').children().remove()
+        // retrieveCoords(source);
+
+
+        setEditableTable2('t01')
+
+
+      });
+
+      //agregando funcionalidad a las herramientas
+      $('#guardarCambios').click(function () {
+        //revisar si es un polygono o linea
+
+        let firstFeature = sourceLayer.getFeatures()[0];
+        let geom = firstFeature.getGeometry();
+        let geomType = geom.getType();
+        updateGeomFromCoords();
+      });
+
+      $('#zoomToFeature').click(function () {
+
+        zoomToFeature(source)
+
+      });
+
+      $('#borrarGeometria').click(function () {
+        //revisar si es un polygono o linea
+        source.clear();
+        auxPoints.clear();
+        $('#tablebody').children().remove();
+        datatable.clear().draw();
+        //datatable=$('#t01').DataTable();
+
+
+//        let firstFeature = sourceLayer.getFeatures()[0];
+
+      });
+
+      $('#zoomToFeature').click(function () {
+
+        zoomToFeature(source)
+
+      });
+
+
+    }
+
+    initToolbar();
+  </script>
+
+
+</body>
+
+</html>
